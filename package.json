@@ -9,16 +9,17 @@
     "dev:server": "cd server && npm run dev",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "postinstall": "node scripts/patch-elevenlabs-client.mjs",
     "preview": "vite preview",
     "start": "node server/index.js",
     "heroku-postbuild": "npm run build"
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.16.0",
+    "@elevenlabs/react": "^1.6.4",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.3",
     "@tailwindcss/vite": "^4.1.13",
-    "@types/ws": "^8.18.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.1.1",
@@ -31,8 +32,7 @@
     "react-dom": "^19.1.1",
     "react-motion": "^0.5.2",
     "tailwind-merge": "^3.3.1",
-    "tailwindcss": "^4.1.13",
-    "ws": "^8.18.3"
+    "tailwindcss": "^4.1.13"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",

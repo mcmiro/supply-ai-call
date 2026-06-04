@@ -1,4 +1,6 @@
+import { ConversationProvider } from '@elevenlabs/react';
 import { ArrowLeft } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useChatContext } from '../../contexts/chat-context';
 import { ChatProvider } from '../../contexts/chat-provider';
 import { ChatInterface } from '../chat';
@@ -13,6 +15,28 @@ import { TopBar } from './top-bar';
 
 const HeroContent = () => {
   const { flowStep } = useChatContext();
+  const [isDesktop, setIsDesktop] = useState(() => {
+    if (typeof window === 'undefined') {
+      return true;
+    }
+
+    return window.matchMedia('(min-width: 768px)').matches;
+  });
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 768px)');
+
+    const updateDesktopState = (event?: MediaQueryListEvent) => {
+      setIsDesktop(event?.matches ?? mediaQuery.matches);
+    };
+
+    updateDesktopState();
+    mediaQuery.addEventListener('change', updateDesktopState);
+
+    return () => {
+      mediaQuery.removeEventListener('change', updateDesktopState);
+    };
+  }, []);
 
   return (
     <>
@@ -23,18 +47,20 @@ const HeroContent = () => {
         <div className="flex flex-col md:grid md:grid-cols-3 justify-end pt-[var(--top-bar)] w-full">
           {/* Desktop Chat Interface - hidden on mobile, show when not in intro */}
           <div className="hidden md:block w-full md:order-1 order-2 min-h-[calc(var(--viewport-height)-var(--top-bar))] md:h-available">
-            {flowStep === 'intro' ? (
-              <div className="flex justify-center items-center h-full p-5 border-r border-black">
-                <div className="p-10 w-full text-center">
-                  <IntroAIAnimation size="80px" className="pb-7" />
-                  <h2 className="text-gray-800 text-2xl mb-7 font-whyte">
-                    Lets do it
-                  </h2>
+            {isDesktop ? (
+              flowStep === 'intro' ? (
+                <div className="flex justify-center items-center h-full p-5 border-r border-black">
+                  <div className="p-10 w-full text-center">
+                    <IntroAIAnimation size="80px" className="pb-7" />
+                    <h2 className="text-gray-800 text-2xl mb-7 font-whyte">
+                      Lets do it
+                    </h2>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <ChatInterface />
-            )}
+              ) : (
+                <ChatInterface />
+              )
+            ) : null}
           </div>
           <div className="md:col-span-2 order-1 md:order-2 flex flex-col justify-start md:justify-end relative ">
             <div className="absolute top-8 left-4 md:!left-auto md:right-8">
@@ -75,8 +101,10 @@ const HeroContent = () => {
 
 export default function Index() {
   return (
-    <ChatProvider>
-      <HeroContent />
-    </ChatProvider>
+    <ConversationProvider>
+      <ChatProvider>
+        <HeroContent />
+      </ChatProvider>
+    </ConversationProvider>
   );
 }

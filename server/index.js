@@ -39,7 +39,7 @@ app.use(
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
-  })
+  }),
 );
 
 app.options('*', cors());
@@ -110,7 +110,7 @@ app.get('/api/agents', async (req, res) => {
   }
 });
 
-// Get signed URL for WebSocket connection
+// Get signed URL for browser websocket connection
 app.post('/api/agents/:agentId/connect', async (req, res) => {
   try {
     const { agentId } = req.params;
@@ -120,7 +120,7 @@ app.post('/api/agents/:agentId/connect', async (req, res) => {
       agentId,
     });
 
-    res.json({ signedUrl: response.signedUrl });
+    res.send(response.signedUrl);
   } catch (error) {
     console.error('Error getting signed URL:', error);
     res.status(500).json({ error: 'Failed to get connection URL' });

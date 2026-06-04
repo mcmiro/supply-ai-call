@@ -1,8 +1,21 @@
+import type { DisconnectionDetails } from '@elevenlabs/react';
+import {
+  useConversation,
+  useConversationControls,
+  useConversationInput,
+  useConversationMode,
+  useConversationStatus,
+} from '@elevenlabs/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatContext } from '../contexts/chat-context';
-import type { ConnectionState, Message } from '../models';
-import { ElevenLabsService } from '../utils/eleven-labs-service';
-import { useAudioManager } from './use-audio-manager';
+import type { AudioManager, ConnectionState, Message } from '../models';
+
+type ConversationMessagePayload = {
+  message: string;
+  role: 'user' | 'agent';
+  source: 'user' | 'ai';
+  event_id?: number;
+};
 
 export interface UseElevenLabsChatReturn {
   // State
@@ -30,40 +43,134 @@ export interface UseElevenLabsChatReturn {
   handleKeyPress: (e: React.KeyboardEvent) => void;
 
   // Audio manager instance
-  audioManager: ReturnType<typeof useAudioManager>;
+  audioManager: AudioManager;
 }
+
+const getBackendUrl = (): string => {
+  if (import.meta.env.VITE_BACKEND_URL) {
+    return import.meta.env.VITE_BACKEND_URL;
+  }
+
+  if (import.meta.env.VITE_APP_URL) {
+    return import.meta.env.VITE_APP_URL;
+  }
+
+  if (typeof window !== 'undefined') {
+    const currentUrl = window.location.origin;
+
+    if (currentUrl.includes('localhost:5173')) {
+      return 'http://localhost:3001';
+    }
+
+    return currentUrl;
+  }
+
+  return import.meta.env.PROD ? '' : 'http://localhost:3001';
+};
 
 export const useElevenLabsChat = (): UseElevenLabsChatReturn => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isConnected, setIsConnected] = useState(false);
-  const [connectionState, setConnectionState] =
-    useState<ConnectionState>('disconnected');
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [error, setError] = useState<string>('');
 
   const { setFlowStep } = useChatContext();
-  const elevenLabsServiceRef = useRef<ElevenLabsService | null>(null);
-  const audioManager = useAudioManager();
+  const pendingReconnectRef = useRef(false);
+  const isStartingRef = useRef(false);
+  const backendUrl = getBackendUrl();
+
+  useConversation({
+    onConnect: () => {
+      console.log('[ElevenLabs] connected');
+      setError('');
+    },
+    onDisconnect: (details: DisconnectionDetails) => {
+      console.log('[ElevenLabs] disconnected', details);
+      if (details.reason === 'error') {
+        setError(details.message);
+      }
+    },
+    onError: (message: string) => {
+      console.error('[ElevenLabs] error', message);
+      setError(message);
+    },
+    onMessage: ({ message, role }: ConversationMessagePayload) => {
+      console.log('[ElevenLabs] message', { role, message });
+      if (!message) {
+        return;
+      }
+
+      const newMessage: Message = {
+        id:
+          typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? crypto.randomUUID()
+            : Date.now().toString(),
+        text: message,
+        sender: role === 'agent' ? 'agent' : 'user',
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, newMessage]);
+    },
+  });
+
+  const { startSession, endSession, sendUserMessage } =
+    useConversationControls();
+  const { status } = useConversationStatus();
+  const { isMuted, setMuted } = useConversationInput();
+  const { isSpeaking } = useConversationMode();
+
+  const connectionState: ConnectionState =
+    status === 'connected'
+      ? 'connected'
+      : status === 'connecting'
+        ? 'connecting'
+        : 'disconnected';
+  const isConnected = status === 'connected';
+
+  const audioManager: AudioManager = {
+    isRecording: isConnected && !isMuted,
+    isPlaying: isSpeaking,
+    startRecording: async () => {
+      setMuted(false);
+    },
+    stopRecording: () => {
+      setMuted(true);
+    },
+    playAudio: async () => {},
+    stopAudio: () => {},
+  };
 
   const initializeService = useCallback(async () => {
     try {
       setError('');
-      const service = new ElevenLabsService();
-      elevenLabsServiceRef.current = service;
+      const response = await fetch(`${backendUrl}/api/agents`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
 
-      // Load agents
-      const agentList = await service.getAgents();
+      if (!response.ok) {
+        throw new Error('Failed to fetch agents');
+      }
+
+      const agentList: Array<{ agentId: string; name?: string }> =
+        await response.json();
 
       if (agentList.length > 0 && !selectedAgentId) {
-        setSelectedAgentId(agentList[0].agentId);
+        const preferred =
+          agentList.find(
+            (a) => a.agentId === 'agent_2101k4yxrs7ge83syg5n15y0wbpn',
+          ) ?? agentList[0];
+        setSelectedAgentId(preferred.agentId);
       }
     } catch {
       setError(
-        'Failed to initialize service. Please check your backend connection.'
+        'Failed to initialize service. Please check your backend connection.',
       );
     }
-  }, [selectedAgentId]);
+  }, [backendUrl, selectedAgentId]);
 
   // Initialize service on hook mount
   useEffect(() => {
@@ -71,98 +178,71 @@ export const useElevenLabsChat = (): UseElevenLabsChatReturn => {
   }, [initializeService]);
 
   const connectToAgent = useCallback(async () => {
-    if (!elevenLabsServiceRef.current || !selectedAgentId) {
+    if (!selectedAgentId) {
       setError('Please select an agent');
       return;
     }
 
-    try {
-      setError('');
-
-      await elevenLabsServiceRef.current.connectToAgent(selectedAgentId, {
-        onMessage: (message: string) => {
-          const newMessage: Message = {
-            id: Date.now().toString(),
-            text: message,
-            sender: 'agent',
-            timestamp: new Date(),
-          };
-          setMessages((prev) => [...prev, newMessage]);
-        },
-        onAudio: async (audioData: ArrayBuffer) => {
-          try {
-            await audioManager.playAudio(audioData);
-          } catch {
-            // Silently handle audio playback errors
-          }
-        },
-        onError: (error: Error) => {
-          setIsConnected(false);
-          setError(error.message);
-        },
-        onUserTranscript: (transcript: string) => {
-          const userMessage: Message = {
-            id: Date.now().toString(),
-            text: transcript,
-            sender: 'user',
-            timestamp: new Date(),
-          };
-          setMessages((prev) => [...prev, userMessage]);
-        },
-        onConnectionStateChange: (state) => {
-          setConnectionState(state);
-          setIsConnected(state === 'connected');
-
-          // Only set up audio chunk handler when connected, and auto-start recording
-          if (state === 'connected') {
-            const chunkHandler = (chunk: ArrayBuffer) => {
-              try {
-                if (!elevenLabsServiceRef.current?.isConnected()) {
-                  return;
-                }
-                elevenLabsServiceRef.current?.sendAudioChunk(chunk);
-              } catch (error) {
-                setError(
-                  `Failed to send audio: ${
-                    error instanceof Error ? error.message : 'Unknown error'
-                  }`
-                );
-              }
-            };
-
-            audioManager.onAudioChunk = chunkHandler;
-
-            // Automatically start recording after connection
-            audioManager
-              .startRecording()
-              .then(() => {
-                setError('');
-              })
-              .catch(() => {
-                setError(
-                  'Could not start microphone automatically. Click the mic button to start recording.'
-                );
-              });
-          } else {
-            // Clear audio handler and stop recording when disconnected
-            audioManager.onAudioChunk = undefined;
-            audioManager.stopRecording();
-          }
-        },
+    if (isStartingRef.current || status !== 'disconnected') {
+      console.log('[ElevenLabs] skip connect, already', {
+        starting: isStartingRef.current,
+        status,
       });
-    } catch {
-      setError('Failed to connect to agent');
-    }
-  }, [selectedAgentId, audioManager]);
-
-  const sendMessage = useCallback(async () => {
-    if (!inputText.trim() || !elevenLabsServiceRef.current?.isConnected()) {
       return;
     }
 
+    isStartingRef.current = true;
+
+    try {
+      setError('');
+
+      const response = await fetch(
+        `${backendUrl}/api/agents/${selectedAgentId}/connect`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to get signed URL');
+      }
+
+      const signedUrl = await response.text();
+      console.log('[ElevenLabs] got signedUrl, starting session');
+
+      await startSession({
+        signedUrl,
+      });
+    } catch (err) {
+      console.error('[ElevenLabs] startSession failed', err);
+      setError('Failed to connect to agent');
+    } finally {
+      isStartingRef.current = false;
+    }
+  }, [backendUrl, selectedAgentId, startSession, status]);
+
+  useEffect(() => {
+    if (pendingReconnectRef.current && status === 'disconnected') {
+      pendingReconnectRef.current = false;
+      void (async () => {
+        await connectToAgent();
+      })();
+    }
+  }, [connectToAgent, status]);
+
+  const sendMessage = useCallback(async () => {
+    if (!inputText.trim() || !isConnected) {
+      return;
+    }
+
+    const trimmedInput = inputText.trim();
+
     const userMessage: Message = {
       id: Date.now().toString(),
-      text: inputText,
+      text: trimmedInput,
       sender: 'user',
       timestamp: new Date(),
     };
@@ -170,12 +250,12 @@ export const useElevenLabsChat = (): UseElevenLabsChatReturn => {
     setMessages((prev) => [...prev, userMessage]);
 
     try {
-      await elevenLabsServiceRef.current.sendTextMessage(inputText);
+      sendUserMessage(trimmedInput);
       setInputText('');
     } catch {
       setError('Failed to send message');
     }
-  }, [inputText]);
+  }, [inputText, isConnected, sendUserMessage]);
 
   const handleKeyPress = useCallback(
     (e: React.KeyboardEvent) => {
@@ -184,17 +264,13 @@ export const useElevenLabsChat = (): UseElevenLabsChatReturn => {
         sendMessage();
       }
     },
-    [sendMessage]
+    [sendMessage],
   );
 
   const disconnect = useCallback(() => {
-    elevenLabsServiceRef.current?.disconnect();
-    audioManager.stopRecording();
-    audioManager.stopAudio();
-    setIsConnected(false);
-    setConnectionState('disconnected');
-    // Keep conversation history visible and stay on chat screen
-  }, [audioManager]);
+    pendingReconnectRef.current = false;
+    endSession();
+  }, [endSession]);
 
   const resetToIntro = useCallback(() => {
     // Disconnect if currently connected
@@ -226,15 +302,15 @@ export const useElevenLabsChat = (): UseElevenLabsChatReturn => {
     setError('');
 
     // Disconnect if currently connected
-    if (isConnected) {
+    if (status !== 'disconnected') {
+      pendingReconnectRef.current = true;
       disconnect();
-      // Wait a moment for disconnect to complete
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      return;
     }
 
     // Reconnect to start fresh conversation
     await connectToAgent();
-  }, [isConnected, disconnect, connectToAgent]);
+  }, [connectToAgent, disconnect, status]);
 
   const toggleRecording = useCallback(async () => {
     if (!isConnected) {
@@ -243,30 +319,19 @@ export const useElevenLabsChat = (): UseElevenLabsChatReturn => {
     }
 
     try {
-      if (audioManager.isRecording) {
-        audioManager.stopRecording();
+      if (isMuted) {
+        setMuted(false);
       } else {
-        // Verify that the audio chunk handler is set up
-        if (!audioManager.onAudioChunk) {
-          audioManager.onAudioChunk = (chunk: ArrayBuffer) => {
-            try {
-              elevenLabsServiceRef.current?.sendAudioChunk(chunk);
-            } catch {
-              // Silently handle audio chunk errors
-            }
-          };
-        }
-
-        await audioManager.startRecording();
-        // Clear any previous errors when recording starts successfully
-        setError('');
+        setMuted(true);
       }
+
+      setError('');
     } catch {
       const errorMessage =
         'Failed to access microphone. Please check permissions.';
       setError(errorMessage);
     }
-  }, [isConnected, audioManager]);
+  }, [isConnected, isMuted, setMuted]);
 
   const handleAcceptTerms = useCallback(async () => {
     setFlowStep('chat');

@@ -1,23 +1,22 @@
 import React from 'react';
 import { useChatContext } from '../../contexts/chat-context';
-import { useElevenLabsChat } from '../../hooks/use-eleven-labs-chat';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { ChatInterface } from './index';
 
 export const MobileChatDialog: React.FC = () => {
-  const { isMobileDialogOpen, setIsMobileDialogOpen, flowStep } =
-    useChatContext();
-  const { handleCancelTerms, resetToIntro } = useElevenLabsChat();
+  const {
+    isMobileDialogOpen,
+    setFlowStep,
+    setIsConnected,
+    setIsMobileDialogOpen,
+  } = useChatContext();
 
   const handleOpenChange = (open: boolean) => {
     setIsMobileDialogOpen(open);
-    // If closing the dialog, always reset to intro to allow starting fresh
+
     if (!open) {
-      if (flowStep === 'terms') {
-        handleCancelTerms();
-      } else if (flowStep === 'chat') {
-        resetToIntro();
-      }
+      setIsConnected(false);
+      setFlowStep('intro');
     }
   };
 
